@@ -98,6 +98,17 @@ class TestJsonDecodeErrorPath(unittest.TestCase):
         self.assertNotIn("JSONDecodeError", result["error"])
         self.assertNotIn("Expecting", result["error"])
         self.assertNotIn("line", result["error"])
+        self.assertNotIn(".py", result["error"])
+        self.assertNotIn("Traceback", result["error"])
+        self.assertNotIn('File "', result["error"])
+
+    def test_invalid_json_full_response_sanitization(self):
+        """No filename, stack trace marker, or exception detail must appear anywhere in the response."""
+        full_response = json.dumps(_run_main_with_input("{bad}"))
+        self.assertNotIn(".py", full_response)
+        self.assertNotIn("Traceback", full_response)
+        self.assertNotIn('File "', full_response)
+        self.assertNotIn("JSONDecodeError", full_response)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +160,15 @@ class TestUnexpectedExceptionPath(unittest.TestCase):
         with patch.object(_module, "_build_operator_readiness", side_effect=Exception("dynamic msg")):
             result = _run_main_with_input(_MINIMAL_VALID_INPUT)
         self.assertEqual(result["error"], _STATIC_UNEXPECTED_ERROR)
+
+    def test_unexpected_error_excludes_implementation_details(self):
+        """No filename (.py), stack trace header, or traceback path must appear anywhere in the response."""
+        with patch.object(_module, "_build_operator_readiness", side_effect=RuntimeError("internal error")):
+            full_response = json.dumps(_run_main_with_input(_MINIMAL_VALID_INPUT))
+        self.assertNotIn(".py", full_response)
+        self.assertNotIn("Traceback", full_response)
+        self.assertNotIn('File "', full_response)
+        self.assertNotIn("RuntimeError", full_response)
 
 
 # ---------------------------------------------------------------------------
