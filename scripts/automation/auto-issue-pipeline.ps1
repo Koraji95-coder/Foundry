@@ -13,12 +13,34 @@ try {
 if (-not $ollamaRunning) {
     Write-Host "Loading $scoringModel..."
     Start-Process -FilePath "ollama" -ArgumentList "run $scoringModel" -WindowStyle Hidden
-    Start-Sleep -Seconds 30
+
+    $maxWait = 120
+    $waited = 0
+    while ($waited -lt $maxWait) {
+        Start-Sleep -Seconds 5
+        $waited += 5
+        try {
+            $ps = Invoke-RestMethod -Uri "http://localhost:11434/api/ps" -ErrorAction Stop
+            if ($ps.models.Count -gt 0) {
+                Write-Host "Model loaded after ${waited}s."
+                break
+            }
+        } catch {}
+    }
+    if ($waited -ge $maxWait) {
+        Write-Host "ERROR: Ollama failed to load model within ${maxWait}s."
+        exit 1
+    }
 }
 
 $webhook = "https://discord.com/api/webhooks/1490590808603361291/SCVngVWu8BmQ87KBfwWZsKjk1nlwrOmSMcfy8F_tn2v2ELtJcDLGWKNhO3Zwy5pAMl_l"
 $userId = "1356296581472718988"
 $ghToken = $env:GITHUB_TOKEN
+if (-not $ghToken) {
+    Write-Host "ERROR: GITHUB_TOKEN environment variable is not set."
+    Write-Host "Set it with: [System.Environment]::SetEnvironmentVariable('GITHUB_TOKEN', 'ghp_...', 'User')"
+    exit 1
+}
 $headers = @{ Authorization = "Bearer $ghToken"; Accept = "application/vnd.github.v3+json" }
 
 # === CONFIGURABLE: How many issues per cycle ===
