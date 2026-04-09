@@ -60,6 +60,7 @@ app.MapHealthEndpoints(logger);
 app.MapMLEndpoints(logger);
 app.MapKnowledgeEndpoints(logger);
 app.MapScheduleEndpoints(logger);
+app.MapChatEndpoints(logger);
 
 app.Run();
 

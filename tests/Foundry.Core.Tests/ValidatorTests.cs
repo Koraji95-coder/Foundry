@@ -177,3 +177,87 @@ public class ScheduleValidatorTests
         Assert.Contains(result.Errors, e => e.ErrorMessage == "FailurePolicy must be 'abort' or 'continue'.");
     }
 }
+
+public class ChatRouteRequestValidatorTests
+{
+    private readonly ChatRouteRequestValidator _validator = new();
+
+    // Valid routes
+
+    [Theory]
+    [InlineData("general")]
+    [InlineData("knowledge")]
+    [InlineData("ml-engineer")]
+    public void ChatRouteRequestValidator_KnownRoute_IsValid(string route)
+    {
+        var result = _validator.Validate(new ChatRouteRequest(route));
+        Assert.True(result.IsValid);
+    }
+
+    // Case-insensitive matching
+
+    [Theory]
+    [InlineData("General")]
+    [InlineData("KNOWLEDGE")]
+    [InlineData("ML-ENGINEER")]
+    public void ChatRouteRequestValidator_KnownRouteCaseInsensitive_IsValid(string route)
+    {
+        var result = _validator.Validate(new ChatRouteRequest(route));
+        Assert.True(result.IsValid);
+    }
+
+    // Empty or whitespace route
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ChatRouteRequestValidator_EmptyOrWhitespaceRoute_FailsWithRequiredMessage(string route)
+    {
+        var result = _validator.Validate(new ChatRouteRequest(route));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.ErrorMessage == "Route is required.");
+    }
+
+    // Unknown route
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("chief-of-staff")]
+    [InlineData("engineering-desk")]
+    [InlineData("not-a-route")]
+    public void ChatRouteRequestValidator_UnknownRoute_FailsWithCatalogMessage(string route)
+    {
+        var result = _validator.Validate(new ChatRouteRequest(route));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.ErrorMessage.Contains("Route must be one of:"));
+    }
+}
+
+public class ChatSendRequestValidatorTests
+{
+    private readonly ChatSendRequestValidator _validator = new();
+
+    // Valid prompt
+
+    [Theory]
+    [InlineData("What is the current ML pipeline status?")]
+    [InlineData("Summarize the latest analytics results.")]
+    [InlineData("a")]
+    public void ChatSendRequestValidator_ValidPrompt_IsValid(string prompt)
+    {
+        var result = _validator.Validate(new ChatSendRequest(prompt));
+        Assert.True(result.IsValid);
+    }
+
+    // Empty or whitespace prompt
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ChatSendRequestValidator_EmptyOrWhitespacePrompt_FailsWithRequiredMessage(string prompt)
+    {
+        var result = _validator.Validate(new ChatSendRequest(prompt));
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.ErrorMessage == "Prompt is required.");
+    }
+}
