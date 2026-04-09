@@ -136,6 +136,14 @@ class TestUnexpectedExceptionPath(unittest.TestCase):
             result = _run_main_with_input(_MINIMAL_VALID_INPUT)
         self._assert_unexpected_error_response(result)
 
+    def test_attribute_error_message_not_leaked_in_response(self):
+        """Raw AttributeError message must NOT appear anywhere in the response (no information disclosure)."""
+        sentinel = "SENSITIVE_ATTR_DETAIL_67890"
+        with patch.object(_module, "_build_operator_readiness", side_effect=AttributeError(sentinel)):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self.assertNotIn(sentinel, result.get("error", ""))
+        self.assertNotIn(sentinel, json.dumps(result))
+
     def test_exception_message_not_leaked_in_response(self):
         """Raw exception message must NOT appear in the error detail (no information disclosure)."""
         sentinel = "SENSITIVE_INTERNAL_DETAIL_12345"
