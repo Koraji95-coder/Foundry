@@ -1,0 +1,227 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      force_rollback:
+        description: 'Force a rollback to the last stable tag'
+        required: false
+        default: 'false'
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  STABLE_TAG_PREFIX: 'stable-'
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build & test before any deployment attempt.
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build_sha: ${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore Foundry.sln
+
+      - name: Build
+        run: dotnet build Foundry.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test Foundry.sln --no-build --configuration Release --verbosity normal
+
+      - name: Publish broker
+        run: dotnet publish src/Foundry.Broker/Foundry.Broker.csproj --no-build --configuration Release --output ./publish
+
+      - name: Upload publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: broker-publish-${{ github.sha }}
+          path: ./publish/
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Deploy: tag the commit as stable on success, roll back on failure.
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy & Rollback Guard
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to push stable-* tags
+    # Only deploy from main (not feature branches).
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Determine whether this is a forced rollback ──────────────────────
+      - name: Check for forced rollback
+        id: forced
+        run: |
+          if [[ "${{ github.event.inputs.force_rollback }}" == "true" ]]; then
+            echo "rollback=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rollback=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Find the last stable tag (used for both rollback paths) ──────────
+      - name: Find last stable tag
+        id: last_stable
+        run: |
+          git fetch --tags --quiet
+          LAST_TAG=$(git tag --list "${{ env.STABLE_TAG_PREFIX }}*" \
+            --sort=-creatordate | head -n 1)
+          if [[ -z "$LAST_TAG" ]]; then
+            echo "No stable tag found."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          else
+            STABLE_SHA=$(git rev-list -n 1 "$LAST_TAG")
+            echo "tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+            echo "sha=$STABLE_SHA" >> "$GITHUB_OUTPUT"
+            echo "Last stable tag: $LAST_TAG @ $STABLE_SHA"
+          fi
+
+      # ── Short-circuit: forced rollback requested via workflow_dispatch ────
+      - name: Perform forced rollback
+        if: steps.forced.outputs.rollback == 'true'
+        run: |
+          if [[ -z "${{ steps.last_stable.outputs.tag }}" ]]; then
+            echo "::error::No stable deployment tag found — cannot roll back."
+            exit 1
+          fi
+          echo "::warning::Forced rollback to ${{ steps.last_stable.outputs.tag }} \
+          (${{ steps.last_stable.outputs.sha }})"
+          echo "ROLLBACK_TAG=${{ steps.last_stable.outputs.tag }}" >> "$GITHUB_ENV"
+          echo "ROLLBACK_SHA=${{ steps.last_stable.outputs.sha }}" >> "$GITHUB_ENV"
+
+      # ── Download the published artifact for THIS commit ──────────────────
+      - name: Download publish artifact
+        if: steps.forced.outputs.rollback != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: broker-publish-${{ github.sha }}
+          path: ./publish/
+
+      # ── Simulate deployment (replace with your real deploy step) ─────────
+      # Replace the body of this step with your actual deployment command,
+      # e.g., rsync to a server, push to a container registry, or a cloud CLI call.
+      - name: Deploy broker
+        id: deploy
+        if: steps.forced.outputs.rollback != 'true'
+        run: |
+          echo "Deploying commit ${{ github.sha }} …"
+          # Verify the published output is present and looks sane.
+          if [[ ! -f "./publish/Foundry.Broker.dll" ]]; then
+            echo "::error::publish artifact is missing Foundry.Broker.dll"
+            exit 1
+          fi
+          echo "Deployment succeeded for ${{ github.sha }}"
+
+      # ── Tag this commit as stable after a successful deploy ───────────────
+      - name: Tag stable deployment
+        if: steps.forced.outputs.rollback != 'true' && steps.deploy.outcome == 'success'
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          DEPLOY_TS=$(date -u +'%Y%m%d-%H%M%S')
+          TAG_NAME="${{ env.STABLE_TAG_PREFIX }}${DEPLOY_TS}"
+          git config user.name  "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
+          git tag -a "$TAG_NAME" "${{ github.sha }}" \
+            -m "Stable deployment: ${{ github.sha }} deployed at ${DEPLOY_TS}"
+          git push origin "$TAG_NAME"
+          echo "Tagged ${{ github.sha }} as $TAG_NAME"
+
+      # ── Roll back when deployment fails ───────────────────────────────────
+      - name: Rollback on deploy failure
+        if: steps.forced.outputs.rollback != 'true' && steps.deploy.outcome == 'failure'
+        run: |
+          if [[ -z "${{ steps.last_stable.outputs.tag }}" ]]; then
+            echo "::error::Deployment failed and no stable tag exists — manual intervention required."
+            exit 1
+          fi
+          echo "::error::Deployment of ${{ github.sha }} FAILED."
+          echo "::warning::Rolling back to last stable: \
+          ${{ steps.last_stable.outputs.tag }} @ ${{ steps.last_stable.outputs.sha }}"
+          echo "ROLLBACK_TAG=${{ steps.last_stable.outputs.tag }}" >> "$GITHUB_ENV"
+          echo "ROLLBACK_SHA=${{ steps.last_stable.outputs.sha }}" >> "$GITHUB_ENV"
+
+      # ── Re-deploy the last stable artifact (rollback path) ────────────────
+      - name: Download stable artifact for rollback
+        if: |
+          steps.forced.outputs.rollback == 'true' ||
+          (steps.deploy.outcome == 'failure' && steps.last_stable.outputs.sha != '')
+        uses: actions/download-artifact@v4
+        with:
+          name: broker-publish-${{ steps.last_stable.outputs.sha }}
+          path: ./publish-stable/
+        continue-on-error: true   # Artifact may not exist in the store; that's handled below.
+
+      - name: Execute rollback deployment
+        if: |
+          steps.forced.outputs.rollback == 'true' ||
+          (steps.deploy.outcome == 'failure' && steps.last_stable.outputs.sha != '')
+        run: |
+          STABLE_TAG="${{ steps.last_stable.outputs.tag }}"
+          STABLE_SHA="${{ steps.last_stable.outputs.sha }}"
+
+          if [[ -z "$STABLE_TAG" ]]; then
+            echo "::error::Cannot roll back — no stable deployment marker found."
+            exit 1
+          fi
+
+          echo "::warning::ROLLBACK in progress → $STABLE_TAG ($STABLE_SHA)"
+
+          # If the stable artifact is available, re-deploy it.
+          if [[ -f "./publish-stable/Foundry.Broker.dll" ]]; then
+            echo "Re-deploying stable artifact from $STABLE_TAG …"
+            # ── Replace with your real rollback deploy command ──
+            echo "Rollback deployment of $STABLE_TAG succeeded."
+          else
+            # Artifact not in the store (too old / first rollback).
+            # Check out the stable SHA so operators can rebuild and re-deploy manually.
+            echo "::warning::Stable artifact not available in artifact store."
+            echo "::warning::Stable commit to redeploy manually: $STABLE_SHA (tag: $STABLE_TAG)"
+            echo "Operators: check out tag $STABLE_TAG and redeploy from source."
+          fi
+
+      # ── Summary ───────────────────────────────────────────────────────────
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ steps.forced.outputs.rollback }}" == "true" ]]; then
+            echo "⏪ **Forced rollback** to \`${{ steps.last_stable.outputs.tag }}\` \
+            (\`${{ steps.last_stable.outputs.sha }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "${{ steps.deploy.outcome }}" == "success" ]]; then
+            echo "✅ **Deployed** commit \`${{ github.sha }}\` — tagged as stable." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "${{ steps.deploy.outcome }}" == "failure" ]]; then
+            echo "❌ **Deployment FAILED** for \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "⏪ **Rolled back** to \`${{ steps.last_stable.outputs.tag }}\` \
+            (\`${{ steps.last_stable.outputs.sha }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ℹ️ No deployment action taken." >> "$GITHUB_STEP_SUMMARY"
+          fi

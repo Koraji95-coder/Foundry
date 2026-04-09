@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "copilot/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Restore .NET dependencies
+        run: dotnet restore Foundry.sln
+
+      - name: Build
+        run: dotnet build Foundry.sln --no-restore --configuration Release
+
+      - name: Run .NET tests
+        run: dotnet test Foundry.sln --no-build --configuration Release --verbosity normal
+
+      - name: Install Python test dependencies
+        run: pip install scikit-learn numpy pytest
+
+      - name: Run Python tests
+        run: python -m pytest scripts/ -v
