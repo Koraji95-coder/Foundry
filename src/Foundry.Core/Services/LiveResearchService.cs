@@ -18,6 +18,8 @@ public sealed class LiveResearchService
 {
     internal const int MaxPreviewLength = 900;
 
+    private const string ExcludedElementsSelector = "script, style, nav, footer, header";
+
     private static readonly HtmlParser _htmlParser = new();
 
     private readonly HttpClient _httpClient;
@@ -174,7 +176,7 @@ public sealed class LiveResearchService
     {
         using var document = _htmlParser.ParseDocument(html);
 
-        foreach (var element in document.QuerySelectorAll("script, style, nav, footer, header"))
+        foreach (var element in document.QuerySelectorAll(ExcludedElementsSelector))
         {
             element.Remove();
         }

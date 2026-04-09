@@ -118,8 +118,12 @@ public sealed class LiveResearchServiceTests
     [Fact]
     public async Task SearchAsync_RespectsMaxResults()
     {
-        var items = string.Concat(Enumerable.Range(1, 10).Select(i =>
-            $"""<div class="result__body"><a class="result__a" href="https://site{i}.com/">Site {i}</a><div class="result__snippet">Snippet {i}.</div></div>"""));
+        var items = string.Concat(Enumerable.Range(1, 10).Select(i => $"""
+            <div class="result__body">
+              <a class="result__a" href="https://site{i}.com/">Site {i}</a>
+              <div class="result__snippet">Snippet {i}.</div>
+            </div>
+            """));
         var html = $"<html><body>{items}</body></html>";
 
         var handler = new StubHandler(html);
