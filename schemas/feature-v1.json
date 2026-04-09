@@ -171,6 +171,13 @@
     "summary": {
       "type": "string",
       "description": "Short summary of the PR from the LLM reviewer"
+    },
+    "code_coverage": {
+      "oneOf": [
+        { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        { "type": "null" }
+      ],
+      "description": "Percentage of production code covered by tests (0.0–100.0). Null when not reported."
     }
   }
 }
