@@ -21,11 +21,11 @@ if (-not $ollamaRunning) {
         $waited += 5
         try {
             $ps = Invoke-RestMethod -Uri "http://localhost:11434/api/ps" -ErrorAction Stop
-            if ($ps.models.Count -gt 0) {
+            if ($ps.models -and $ps.models.Count -gt 0) {
                 Write-Host "Model loaded after ${waited}s."
                 break
             }
-        } catch {}
+        } catch { Write-Verbose "Polling attempt failed: $_" }
     }
     if ($waited -ge $maxWait) {
         Write-Host "ERROR: Ollama failed to load model within ${maxWait}s."
