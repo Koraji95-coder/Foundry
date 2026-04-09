@@ -4,15 +4,35 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Foundry.Services;
 
+/// <summary>
+/// Runs external processes (Python scripts, CLI tools) and returns their standard output.
+/// Used by <see cref="MLAnalyticsService"/> and <see cref="OllamaService"/> to invoke Python
+/// ML scripts and the Ollama CLI respectively.
+/// Throws <see cref="InvalidOperationException"/> when a process exits with a non-zero code.
+/// </summary>
 public sealed class ProcessRunner
 {
     private readonly ILogger<ProcessRunner> _logger;
 
+    /// <param name="logger">Optional logger. Defaults to a no-op logger when null.</param>
     public ProcessRunner(ILogger<ProcessRunner>? logger = null)
     {
         _logger = logger ?? NullLogger<ProcessRunner>.Instance;
     }
 
+    /// <summary>
+    /// Runs <paramref name="fileName"/> with <paramref name="arguments"/> and returns stdout.
+    /// </summary>
+    /// <param name="fileName">Executable name or full path (e.g. "python", "ollama").</param>
+    /// <param name="arguments">Command-line arguments passed verbatim to the process.</param>
+    /// <param name="workingDirectory">
+    /// Working directory for the process. Defaults to <see cref="Environment.CurrentDirectory"/> when null.
+    /// </param>
+    /// <param name="cancellationToken">Token to cancel waiting for the process to exit.</param>
+    /// <returns>The full stdout output of the process.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the process exits with a non-zero exit code; the message includes up to 500 characters of stderr.
+    /// </exception>
     public async Task<string> RunAsync(
         string fileName,
         string arguments,

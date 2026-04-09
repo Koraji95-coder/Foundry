@@ -8,9 +8,17 @@ using Polly;
 
 namespace Foundry.Services;
 
+/// <summary>
+/// <see cref="IModelProvider"/> implementation backed by a local Ollama instance.
+/// Communicates with Ollama via its HTTP API using <c>OllamaSharp</c>, with a CLI fallback
+/// for model listing. All network calls are wrapped in a configurable Polly resilience pipeline.
+/// </summary>
 public sealed class OllamaService : IModelProvider
 {
+    /// <summary>Machine-readable provider ID for Ollama.</summary>
     public const string OllamaProviderId = "ollama";
+
+    /// <summary>Human-readable label for Ollama.</summary>
     public const string OllamaProviderLabel = "Ollama (local)";
 
     private readonly OllamaApiClient _client;
@@ -20,9 +28,19 @@ public sealed class OllamaService : IModelProvider
     private readonly JsonSerializerOptions _jsonOptions =
         new() { PropertyNameCaseInsensitive = true };
 
+    /// <inheritdoc/>
     public string ProviderId => OllamaProviderId;
+
+    /// <inheritdoc/>
     public string ProviderLabel => OllamaProviderLabel;
 
+    /// <summary>
+    /// Creates an <see cref="OllamaService"/> that connects to the Ollama HTTP API at the given endpoint.
+    /// </summary>
+    /// <param name="endpoint">Base URL of the Ollama API (e.g. "http://127.0.0.1:11434").</param>
+    /// <param name="processRunner">Used for CLI fallback when the API is unreachable.</param>
+    /// <param name="resiliencePipeline">Optional Polly pipeline for retries/circuit-breaking. Defaults to no-op.</param>
+    /// <param name="logger">Optional logger. Defaults to a no-op logger when null.</param>
     public OllamaService(string endpoint, ProcessRunner processRunner, ResiliencePipeline? resiliencePipeline = null, ILogger<OllamaService>? logger = null)
     {
         var uri = new Uri(endpoint.EndsWith("/") ? endpoint : $"{endpoint}/");
@@ -37,6 +55,11 @@ public sealed class OllamaService : IModelProvider
         _logger = logger ?? NullLogger<OllamaService>.Instance;
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Tries the Ollama HTTP API first. Falls back to <c>ollama list</c> CLI output
+    /// if the API call fails. Returns an empty list if both attempts fail.
+    /// </remarks>
     public async Task<IReadOnlyList<string>> GetInstalledModelsAsync(
         CancellationToken cancellationToken = default
     )
@@ -81,6 +104,7 @@ public sealed class OllamaService : IModelProvider
         }
     }
 
+    /// <inheritdoc/>
     public async Task<string> GenerateAsync(
         string model,
         string systemPrompt,
@@ -113,6 +137,7 @@ public sealed class OllamaService : IModelProvider
         }, cancellationToken);
     }
 
+    /// <inheritdoc/>
     public async Task<T?> GenerateJsonAsync<T>(
         string model,
         string systemPrompt,
