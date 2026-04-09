@@ -195,33 +195,6 @@ Once LiteDB has been proven stable across multiple workstations:
 
 ---
 
-### 8. WPF MainViewModel — Partial Class Growth
-
-| | |
-|---|---|
-| **Files** | `Foundry/ViewModels/MainViewModel.cs`, `Foundry/ViewModels/MainViewModel.Operator.cs`, `Foundry/ViewModels/MainViewModel.Workflow.cs`, `Foundry/ViewModels/MainViewModel.OfficeChat.cs`, `Foundry/ViewModels/MainViewModel.OfficeDesks.cs`, `Foundry/ViewModels/MainViewModel.Guide.cs` |
-| **Combined size** | ~4,200+ lines |
-| **Phase introduced** | Phase 1 (grew through Phase 9) |
-
-**What it does now:**
-The WPF ViewModel is split across 6 partial class files. Each file handles a domain (operator memory, workflow automation, chat routing, desk selection, training guide).
-
-**Why it is under pressure:**
-- The partial class approach manages file size but does not enforce boundaries. One partial class can freely call or modify state from another, and frequently does.
-- The desk-specific chat logic in `MainViewModel.OfficeDesks.cs` and `MainViewModel.OfficeChat.cs` will grow as Phase 9 async polling matures (job polling, streaming responses, status display).
-
-**Refactor direction:**
-Convert to ViewModel-per-desk as the SK agent desks mature (post Phase 9):
-- `OperatorViewModel` — operator memory, inbox, suggestions.
-- `ResearchViewModel` — research jobs, watchlist.
-- `WorkflowViewModel` — schedules, daily-run, workflow templates.
-
-Keep `MainViewModel` as a shell that navigates between desk ViewModels. This mirrors the SK agent desk model established in Phase 6.
-
-**Prerequisite:** Phase 9 async integration stabilized. Defer until WPF job polling is confirmed working.
-
----
-
 ## Resolved Pressure (Archive)
 
 Keep a record of pressure areas that have been resolved so contributors understand why certain patterns were adopted.
@@ -239,6 +212,7 @@ Keep a record of pressure areas that have been resolved so contributors understa
 | Text-only document extraction | Phase 7 | Added Docling pipeline with table and figure extraction |
 | No scheduled automation | Phase 8 | Added cron-style `JobSchedulerStore` + `JobSchedulerWorker` |
 | WPF client blocking on ML calls | Phase 9 | Added `JobPollingService` with async poll loop |
+| WPF MainViewModel partial class growth | N/A — WPF removed | WPF desktop project was removed from the repo. The concern no longer applies; all operator interaction now goes through the Discord bot (`bot/`). |
 | Validators.cs flat file vs. convention | Tech Debt (chunk7) | Completed domain split: added `Validators/MLValidators.cs` and `Validators/ScheduleValidators.cs` alongside pre-existing `ChatValidators.cs`; deleted root-level `Validators.cs` |
 | PHASES-ROADMAP.md stale phase status | Tech Debt (chunk issue) | Updated status table: Phase 4 → ✅ Complete (health monitoring, JobRetentionWorker, PingAsync); Phase 5 → ✅ Complete (EmbeddingService, VectorStoreService, KnowledgeIndexStore) |
 | Broker Program.cs — All Endpoints in One File | Tech Debt (chunk issue) | Extracted 30+ endpoints into 8 dedicated `IEndpointRouteBuilder` extension files under `Foundry.Broker/Endpoints/`; request records co-located with their handlers; `Program.cs` reduced to ~70 lines of infrastructure setup |
