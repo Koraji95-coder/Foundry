@@ -17,6 +17,7 @@ import json
 import math
 import re
 import sys
+import traceback
 from collections import Counter
 from typing import Any
 
@@ -276,9 +277,10 @@ def main() -> None:
     if _try_import_torch():
         try:
             result = _torch_embeddings(documents, query)
-        except Exception as exc:
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
             result = _tfidf_embeddings(documents, query)
-            result["pytorchError"] = str(exc)
+            result["pytorchError"] = "PyTorch inference failed; using TF-IDF fallback. See server logs for details."
     else:
         result = _tfidf_embeddings(documents, query)
 

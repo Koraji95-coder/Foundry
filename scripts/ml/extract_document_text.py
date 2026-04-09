@@ -16,6 +16,7 @@ Output: a single JSON line to stdout with the shape:
 
 import json
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -170,8 +171,9 @@ def main() -> None:
     try:
         result = extract(path)
         print(json.dumps(result, ensure_ascii=False, default=str))
-    except Exception as exc:  # pragma: no cover
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        print(json.dumps({"ok": False, "error": "An unexpected error occurred. See server logs for details."}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

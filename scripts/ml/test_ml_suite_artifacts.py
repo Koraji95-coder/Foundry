@@ -136,6 +136,52 @@ class TestUnexpectedExceptionPath(unittest.TestCase):
             result = _run_main_with_input(_MINIMAL_VALID_INPUT)
         self._assert_unexpected_error_response(result)
 
+    def test_index_error_returns_static_detail(self):
+        with patch.object(_module, "_build_operator_readiness", side_effect=IndexError("list index out of range")):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self._assert_unexpected_error_response(result)
+
+    def test_zero_division_error_returns_static_detail(self):
+        with patch.object(_module, "_build_knowledge_index", side_effect=ZeroDivisionError("division by zero")):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self._assert_unexpected_error_response(result)
+
+    def test_os_error_returns_static_detail(self):
+        with patch.object(_module, "_build_study_schedule", side_effect=OSError("file not found")):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self._assert_unexpected_error_response(result)
+
+    def test_not_implemented_error_returns_static_detail(self):
+        with patch.object(_module, "_build_watchdog_baseline", side_effect=NotImplementedError("not yet")):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self._assert_unexpected_error_response(result)
+
+    def test_memory_error_returns_static_detail(self):
+        with patch.object(_module, "_build_operator_readiness", side_effect=MemoryError("out of memory")):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self._assert_unexpected_error_response(result)
+
+    def test_stop_iteration_returns_static_detail(self):
+        with patch.object(_module, "_build_knowledge_index", side_effect=StopIteration):
+            result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+        self._assert_unexpected_error_response(result)
+
+    def test_all_builders_sanitize_exceptions(self):
+        """Each artifact builder must produce a sanitized error when it raises."""
+        builders = [
+            "_build_operator_readiness",
+            "_build_knowledge_index",
+            "_build_study_schedule",
+            "_build_watchdog_baseline",
+        ]
+        for builder_name in builders:
+            with self.subTest(builder=builder_name):
+                sentinel = f"SENSITIVE_DATA_FROM_{builder_name.upper()}"
+                with patch.object(_module, builder_name, side_effect=RuntimeError(sentinel)):
+                    result = _run_main_with_input(_MINIMAL_VALID_INPUT)
+                self._assert_unexpected_error_response(result)
+                self.assertNotIn(sentinel, json.dumps(result))
+
     def test_exception_message_not_leaked_in_response(self):
         """Raw exception message must NOT appear in the error detail (no information disclosure)."""
         sentinel = "SENSITIVE_INTERNAL_DETAIL_12345"
