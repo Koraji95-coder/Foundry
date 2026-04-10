@@ -221,11 +221,10 @@ async def triage(interaction: discord.Interaction):
             state_root = os.environ.get("FOUNDRY_STATE_ROOT", os.path.expanduser("~/FoundryState"))
             raw_path = os.path.join(state_root, "raw.jsonl")
             if os.path.exists(raw_path):
-                import json as json_mod
                 with open(raw_path, "r") as f:
                     for line in f:
                         try:
-                            record = json_mod.loads(line.strip())
+                            record = json.loads(line.strip())
                             if record.get("pr_number") and record.get("score"):
                                 pr_scores[record["pr_number"]] = record["score"]
                         except Exception:
@@ -287,13 +286,13 @@ async def triage(interaction: discord.Interaction):
                 label = " (merge first)" if rank == 0 else " (re-review after)"
                 lines.append(f"{prefix} #{n} — score {score}/10 — {size} lines{label}")
 
-            # Find shared files
-            all_files = set()
+            # Find shared files (files appearing in 2+ PRs)
+            from collections import Counter
+            file_counts = Counter()
             for n in cluster:
-                all_files |= set(pr_data[n]["files"])
-            shared = set()
-            for n in cluster:
-                shared |= set(pr_data[n]["files"]) & all_files
+                for f in pr_data[n]["files"]:
+                    file_counts[f] += 1
+            shared = {f for f, c in file_counts.items() if c >= 2}
 
             embed.add_field(
                 name=f"Cluster {i+1}: {len(cluster)} PRs",
