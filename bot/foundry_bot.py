@@ -185,6 +185,134 @@ async def reject(interaction: discord.Interaction, pr_ref: str, reason: str = "N
     await run_script(interaction, "reject.ps1", "Reject", script_dir="commands", extra_args=[pr_ref, reason])
 
 
+@tree.command(name="triage", description="Group overlapping PRs and recommend merge order", guild=guild)
+async def triage(interaction: discord.Interaction):
+    await interaction.response.defer()
+    try:
+        # Fetch all open PRs from GitHub API
+        gh_headers = {"Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN', '')}", "Accept": "application/vnd.github.v3+json"}
+        repo = "Koraji95-coder/Foundry"
+
+        async with http_session.get(f"https://api.github.com/repos/{repo}/pulls?state=open&per_page=100", headers=gh_headers) as resp:
+            prs = await resp.json()
+
+        if not prs:
+            await interaction.followup.send(embed=discord.Embed(title="Triage", description="No open PRs.", color=0x3498db))
+            return
+
+        # Fetch file lists for each PR
+        pr_data = {}
+        for pr in prs:
+            try:
+                async with http_session.get(f"https://api.github.com/repos/{repo}/pulls/{pr['number']}/files?per_page=100", headers=gh_headers) as resp:
+                    files_resp = await resp.json()
+                pr_data[pr['number']] = {
+                    "title": pr['title'],
+                    "files": [f['filename'] for f in files_resp],
+                    "additions": pr.get('additions', 0),
+                    "deletions": pr.get('deletions', 0),
+                }
+            except Exception:
+                continue
+
+        # Try to get scores from the latest review data
+        pr_scores = {}
+        try:
+            state_root = os.environ.get("FOUNDRY_STATE_ROOT", os.path.expanduser("~/FoundryState"))
+            raw_path = os.path.join(state_root, "raw.jsonl")
+            if os.path.exists(raw_path):
+                with open(raw_path, "r") as f:
+                    for line in f:
+                        try:
+                            record = json.loads(line.strip())
+                            if record.get("pr_number") and record.get("score"):
+                                pr_scores[record["pr_number"]] = record["score"]
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
+        # Build conflict graph — PRs that share files are connected
+        clusters = []
+        assigned = set()
+
+        pr_numbers = list(pr_data.keys())
+        for i, pr_a in enumerate(pr_numbers):
+            if pr_a in assigned:
+                continue
+            cluster = [pr_a]
+            assigned.add(pr_a)
+            files_a = set(pr_data[pr_a]["files"])
+
+            for pr_b in pr_numbers[i+1:]:
+                if pr_b in assigned:
+                    continue
+                files_b = set(pr_data[pr_b]["files"])
+                overlap = files_a & files_b
+                if overlap:
+                    cluster.append(pr_b)
+                    assigned.add(pr_b)
+                    files_a |= files_b  # expand cluster's file set
+
+            if len(cluster) > 1:
+                clusters.append(cluster)
+
+        # Build the triage embed
+        if not clusters:
+            # No conflicts — just list all PRs sorted by score
+            sorted_prs = sorted(pr_data.keys(), key=lambda n: pr_scores.get(n, 0), reverse=True)
+            lines = []
+            for n in sorted_prs[:15]:
+                score = pr_scores.get(n, "?")
+                size = pr_data[n]["additions"] + pr_data[n]["deletions"]
+                lines.append(f"#{n} — score {score}/10 — {size} lines — {pr_data[n]['title'][:60]}")
+            embed = discord.Embed(title="Triage — no conflicts", description="No file overlaps detected. Merge in any order.", color=0x2ecc71)
+            embed.add_field(name="By score (highest first)", value="\n".join(lines) or "No PRs", inline=False)
+            await interaction.followup.send(embed=embed)
+            return
+
+        # Format conflict clusters with recommended merge order
+        embed = discord.Embed(title=f"Triage — {len(clusters)} conflict cluster{'s' if len(clusters) != 1 else ''}", color=0xf39c12)
+
+        for i, cluster in enumerate(clusters):
+            # Sort: highest score first, smallest size as tiebreaker
+            sorted_cluster = sorted(cluster, key=lambda n: (-pr_scores.get(n, 0), pr_data[n]["additions"] + pr_data[n]["deletions"]))
+
+            lines = []
+            for rank, n in enumerate(sorted_cluster):
+                score = pr_scores.get(n, "?")
+                size = pr_data[n]["additions"] + pr_data[n]["deletions"]
+                prefix = f"{rank+1}."
+                label = " (merge first)" if rank == 0 else " (re-review after)"
+                lines.append(f"{prefix} #{n} — score {score}/10 — {size} lines{label}")
+
+            # Find shared files (files appearing in 2+ PRs)
+            from collections import Counter
+            file_counts = Counter()
+            for n in cluster:
+                for f in pr_data[n]["files"]:
+                    file_counts[f] += 1
+            shared = {f for f, c in file_counts.items() if c >= 2}
+
+            embed.add_field(
+                name=f"Cluster {i+1}: {len(cluster)} PRs",
+                value="\n".join(lines) + f"\n*Shared files: {', '.join(sorted(shared)[:5])}{'...' if len(shared) > 5 else ''}*",
+                inline=False
+            )
+
+        # Add unconnected PRs
+        unconnected = [n for n in pr_numbers if n not in assigned]
+        if unconnected:
+            sorted_unc = sorted(unconnected, key=lambda n: pr_scores.get(n, 0), reverse=True)
+            lines = [f"#{n} — score {pr_scores.get(n, '?')}/10 — {pr_data[n]['title'][:50]}" for n in sorted_unc[:10]]
+            embed.add_field(name="No conflicts (merge anytime)", value="\n".join(lines), inline=False)
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        logger.exception("Triage failed")
+        await interaction.followup.send(embed=discord.Embed(title="Triage failed", description=str(e)[:200], color=0xe74c3c))
+
+
 @tree.command(name="commands", description="List all Foundry bot commands", guild=guild)
 async def list_commands(interaction: discord.Interaction):
     embed = discord.Embed(title="Foundry commands", color=0x3498DB)
@@ -196,6 +324,7 @@ async def list_commands(interaction: discord.Interaction):
     embed.add_field(name="/review", value="Score all open PRs with the scoring engine", inline=False)
     embed.add_field(name="/approve [pr_ref]", value="Approve a PR and log the decision", inline=False)
     embed.add_field(name="/reject [pr_ref] [reason]", value="Reject a PR and log the decision", inline=False)
+    embed.add_field(name="/triage", value="Group overlapping PRs and recommend merge order", inline=False)
     embed.add_field(name="/commands", value="List all Foundry bot commands", inline=False)
     await interaction.response.send_message(embed=embed)
 
