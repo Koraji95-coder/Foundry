@@ -15,7 +15,7 @@ Covers:
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
 # Module import
@@ -462,6 +462,87 @@ class TestManualFallback(unittest.TestCase):
         self.assertTrue(
             any("verdict" in e for e in errors),
             f"Expected 'verdict' in errors; got: {errors}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group 9: Logging behaviour
+# ---------------------------------------------------------------------------
+class TestLogging(unittest.TestCase):
+    """Verify that validate_schema emits appropriate log records."""
+
+    def test_warning_logged_on_invalid_sample(self):
+        sample = _valid_sample()
+        del sample["pr_number"]
+        with self.assertLogs("validate_schema", level="WARNING") as cm:
+            _module.validate_sample(sample)
+        self.assertTrue(
+            any("validation failed" in msg.lower() for msg in cm.output),
+            f"Expected warning about validation failure; got: {cm.output}",
+        )
+
+    def test_warning_contains_error_count(self):
+        sample = _valid_sample()
+        del sample["pr_number"]
+        del sample["repo"]
+        with self.assertLogs("validate_schema", level="WARNING") as cm:
+            _module.validate_sample(sample)
+        combined = " ".join(cm.output)
+        self.assertIn("2", combined)
+
+    def test_no_warning_logged_on_valid_sample(self):
+        # valid sample must not emit WARNING or above
+        import logging
+        with self.assertLogs("validate_schema", level="DEBUG") as cm:
+            # emit a sentinel DEBUG so assertLogs doesn't fail on "no records"
+            logging.getLogger("validate_schema").debug("sentinel")
+            _module.validate_sample(_valid_sample())
+        warnings = [r for r in cm.output if r.startswith("WARNING") or r.startswith("ERROR")]
+        self.assertEqual(warnings, [], f"Unexpected warning/error records: {warnings}")
+
+    def test_error_logged_on_missing_schema_file(self):
+        original_cache = _module._SCHEMA_CACHE
+        try:
+            _module._SCHEMA_CACHE = None
+            with patch("builtins.open", side_effect=FileNotFoundError("no such file")):
+                with self.assertLogs("validate_schema", level="ERROR") as cm:
+                    with self.assertRaises(FileNotFoundError):
+                        _module._load_schema()
+            self.assertTrue(
+                any("Schema file not found" in msg for msg in cm.output),
+                f"Expected error about missing schema; got: {cm.output}",
+            )
+        finally:
+            _module._SCHEMA_CACHE = original_cache
+
+    def test_error_logged_on_invalid_schema_json(self):
+        import io
+        original_cache = _module._SCHEMA_CACHE
+        try:
+            _module._SCHEMA_CACHE = None
+            bad_file = MagicMock()
+            bad_file.__enter__ = lambda _: io.StringIO("not-json{{{")
+            bad_file.__exit__ = MagicMock(return_value=False)
+            with patch("builtins.open", return_value=bad_file):
+                with self.assertLogs("validate_schema", level="ERROR") as cm:
+                    with self.assertRaises(Exception):
+                        _module._load_schema()
+            self.assertTrue(
+                any("parse schema JSON" in msg for msg in cm.output),
+                f"Expected error about JSON parse failure; got: {cm.output}",
+            )
+        finally:
+            _module._SCHEMA_CACHE = original_cache
+
+    def test_warning_logged_on_invalid_sample_manual_fallback(self):
+        sample = _valid_sample()
+        del sample["pr_number"]
+        with patch.dict("sys.modules", {"jsonschema": None}):
+            with self.assertLogs("validate_schema", level="WARNING") as cm:
+                _module.validate_sample(sample)
+        self.assertTrue(
+            any("validation failed" in msg.lower() for msg in cm.output),
+            f"Expected warning about validation failure; got: {cm.output}",
         )
 
 

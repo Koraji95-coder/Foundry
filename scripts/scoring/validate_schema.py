@@ -14,9 +14,12 @@ Returns exit code 0 on success, 1 on validation failure.
 """
 
 import json
+import logging
 import os
 import sys
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Resolve the schema path relative to this file's location:
 #   scripts/scoring/validate_schema.py  →  ../../schemas/feature-v1.json
@@ -31,8 +34,16 @@ def _load_schema() -> dict[str, Any]:
     global _SCHEMA_CACHE
     if _SCHEMA_CACHE is None:
         abs_path = os.path.abspath(_SCHEMA_PATH)
-        with open(abs_path, "r", encoding="utf-8") as f:
-            _SCHEMA_CACHE = json.load(f)
+        _log.debug("Loading schema from %s", abs_path)
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                _SCHEMA_CACHE = json.load(f)
+        except FileNotFoundError:
+            _log.error("Schema file not found: %s", abs_path)
+            raise
+        except json.JSONDecodeError as exc:
+            _log.error("Failed to parse schema JSON from %s: %s", abs_path, exc)
+            raise
     return _SCHEMA_CACHE
 
 
@@ -56,7 +67,13 @@ def validate_sample(sample: dict) -> tuple[bool, list[str]]:
         validator = jsonschema.Draft7Validator(schema)
         errors = [e.message for e in sorted(validator.iter_errors(sample), key=str)]
         if errors:
+            _log.warning(
+                "Sample validation failed with %d error(s): %s",
+                len(errors),
+                "; ".join(errors),
+            )
             return False, errors
+        _log.debug("Sample is valid")
         return True, []
     except ImportError:
         pass
@@ -146,6 +163,14 @@ def validate_sample(sample: dict) -> tuple[bool, list[str]]:
                 f"'{field}' has wrong type (expected {expected}, got {type(value).__name__})"
             )
 
+    if errors:
+        _log.warning(
+            "Sample validation failed with %d error(s): %s",
+            len(errors),
+            "; ".join(errors),
+        )
+    else:
+        _log.debug("Sample is valid")
     return (len(errors) == 0), errors
 
 
@@ -154,10 +179,15 @@ def validate_sample(sample: dict) -> tuple[bool, list[str]]:
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
     try:
         sample = json.load(sys.stdin)
     except json.JSONDecodeError as exc:
-        print(f"ERROR: could not parse JSON from stdin: {exc}", file=sys.stderr)
+        _log.error("Could not parse JSON from stdin: %s", exc)
         sys.exit(1)
 
     ok, errs = validate_sample(sample)
